@@ -1,1 +1,1 @@
-# terraform-provider-st-azureada
+# terraform-provider-st-azuread
