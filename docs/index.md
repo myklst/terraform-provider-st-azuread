@@ -30,5 +30,5 @@ provider "st-azuread" {}
 ### Optional
 
 - `client_id` (String) Client ID for MS Graph API. May also be provided via AZURE_CLIENT_ID environment variable.
-- `tenant_id` (String) Tenant ID for MS Graph API. May also be provided via AZURE_TENANT_ID environment variable.
 - `client_secret` (String) Client Secret for MS Graph API. May also be provided via AZURE_CLIENT_SECRET environment variable.
+- `tenant_id` (String) Tenant ID for MS Graph API. May also be provided via AZURE_TENANT_ID environment variable.

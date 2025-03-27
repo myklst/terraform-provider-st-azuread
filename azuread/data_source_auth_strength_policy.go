@@ -61,7 +61,7 @@ func (d *authStrengthPolicyDataSource) Configure(_ context.Context, req datasour
 	d.client = req.ProviderData.(azureadClients).graphClient
 }
 
-func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) { 
 	var authStrengthPolicy models.AuthenticationStrengthPolicyable
 	var authStrengthPolicies models.AuthenticationStrengthPolicyCollectionResponseable
 	var err error
@@ -72,8 +72,7 @@ func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.
 		return
 	}
 
-	if plan.AuthStrPolicyID != types.StringNull() { //TODO TEST WHEN TWO AUTHENTICATION NAMES ARE THE SAME
-
+	if plan.AuthStrPolicyID != types.StringNull() {
 		getAuthStrengthPolicy := func() error {
 			if authStrengthPolicy, err = d.client.Policies().AuthenticationStrengthPolicies().ByAuthenticationStrengthPolicyId(plan.AuthStrPolicyID.ValueString()).Get(context.Background(), nil); err != nil {
 				return handleAPIError(err)
@@ -87,7 +86,7 @@ func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.
 
 		if err != nil {
 			resp.Diagnostics.AddError(
-				"Unable to Retrieve Authentication Strength Policy",
+				"[API ERROR] Unable to Retrieve Authentication Strength Policy",
 				"An unexpected error occurred while retrieving the Authentication Strength Policy "+
 					"from Microsoft Entra ID via Microsoft Graph API. Please verify that the provided "+
 					"Authentication Strength Policy ID is correct and that the API permissions are "+
@@ -116,10 +115,10 @@ func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.
 
 		if err != nil {
 			resp.Diagnostics.AddError(
-				"Unable to Retrieve Authentication Strength Policy",
+				"[API ERROR] Unable to Retrieve Authentication Strength Policy",
 				"An unexpected error occurred while retrieving the Authentication Strength Policy "+
 					"from Microsoft Entra ID via Microsoft Graph API. Please verify that the provided "+
-					"Authentication Strength Policy ID is correct and that the API permissions are "+
+					"Authentication Strength Policy Name is correct and that the API permissions are "+
 					"correctly configured.\n\n"+
 					"Microsoft Graph API Error: "+err.Error(),
 			)

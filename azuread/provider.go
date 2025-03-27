@@ -222,5 +222,7 @@ func (p *azureadProvider) DataSources(_ context.Context) []func() datasource.Dat
 }
 
 func (p *azureadProvider) Resources(_ context.Context) []func() resource.Resource {
-	return []func() resource.Resource{}
+	return []func() resource.Resource{
+		NewAuthMethodPolicyResource,
+	}
 }

@@ -42,11 +42,20 @@ This custom provider exists due to some of the resources and data sources in the
 official AzureAd Terraform provider may not fulfill the requirements of some
 scenario. The reason behind every resources and data sources are stated as below:
 
+### Resources
+
+- **st-azuread_auth_method_policy**
+
+  - Official AzureAD Terraform provider does not have the ability to manage the
+    authentication method policies.
+
 ### Data Sources
 
 - **st-azuread_auth_strength_policy**
 
-  - To obtain the id or name of the authentication strength policy on Microsoft Entra ID via id or name.
+  - Official AzureAD Terraform provider does not have the ability to obtain the
+    id or name of the authentication strength policy on Microsoft Entra ID via
+    id or name.
 
 References
 ----------
