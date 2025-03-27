@@ -39,7 +39,7 @@ Why Custom Provider
 -------------------
 
 This custom provider exists due to some of the resources and data sources in the
-official AzureAd Terraform provider may not fulfill the requirements of some
+official AzureAD Terraform provider may not fulfill the requirements of some
 scenario. The reason behind every resources and data sources are stated as below:
 
 ### Resources
