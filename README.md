@@ -47,7 +47,7 @@ scenario. The reason behind every resources and data sources are stated as below
 - **st-azuread_auth_method_policy**
 
   - Official AzureAD Terraform provider does not have the ability to manage the
-    authentication method policies.
+    authentication method policies on Microsoft Entra ID.
 
 ### Data Sources
 
