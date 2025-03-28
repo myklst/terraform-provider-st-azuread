@@ -2,9 +2,11 @@ package azuread
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cenkalti/backoff"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -71,56 +73,16 @@ func (r *authMethodPolicyResource) Configure(_ context.Context, req resource.Con
 
 // Will overwrite existing excluded groups
 func (r *authMethodPolicyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan, state *authMethodPolicyResourceModel
+	var plan, state authMethodPolicyResourceModel
 	getPlanDiags := req.Plan.Get(ctx, &plan)
 	resp.Diagnostics.Append(getPlanDiags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	excludedGroups := []graphModels.ExcludeTargetable{}
-	targetType := graphModels.GROUP_AUTHENTICATIONMETHODTARGETTYPE
-
-	for _, excludedGroupID := range plan.ExcludedGroupIDs {
-		excludedGroup := graphModels.NewExcludeTarget()
-		excludedGroup.SetId(StringPtr(excludedGroupID.ValueString()))
-		excludedGroup.SetTargetType(&targetType)
-		excludedGroups = append(excludedGroups, excludedGroup)
-	}
-
-	requestBody := r.getAuthMethodReqBody(plan.Type.ValueString())
-	authMethodPolicyState := r.getState(plan.State.ValueString())
-	requestBody.SetState(&authMethodPolicyState)
-	requestBody.SetExcludeTargets(excludedGroups)
-
-	state = plan
-
-	updateAuthMethodPolicy := func() error {
-		_, err := r.client.Policies().
-			AuthenticationMethodsPolicy().
-			AuthenticationMethodConfigurations().
-			ByAuthenticationMethodConfigurationId(plan.Type.ValueString()).
-			Patch(context.Background(), requestBody, nil)
-
-		if err != nil {
-			return handleAPIError(err)
-		}
-		return nil
-	}
-
-	reconnectBackoff := backoff.NewExponentialBackOff()
-	reconnectBackoff.MaxElapsedTime = 30 * time.Second
-	err := backoff.Retry(updateAuthMethodPolicy, reconnectBackoff)
-
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"[API ERROR] Unable to Create Authentication Method Policy",
-			"An unexpected error occurred while creating the Authentication Method Policy "+
-				"from Microsoft Entra ID via Microsoft Graph API. Please verify that the provided "+
-				"inputs are correct and that the API permissions are "+
-				"correctly configured.\n\n"+
-				"Microsoft Graph API Error: "+err.Error(),
-		)
+	createDiags := r.createAuthMethodPolicy(&plan, &state)
+	resp.Diagnostics.Append(createDiags...)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
@@ -191,13 +153,54 @@ func (r *authMethodPolicyResource) Read(ctx context.Context, req resource.ReadRe
 }
 
 func (r *authMethodPolicyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state *authMethodPolicyResourceModel
+	var plan, state authMethodPolicyResourceModel
 	getPlanDiags := req.Plan.Get(ctx, &plan)
 	resp.Diagnostics.Append(getPlanDiags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	getStateDiags := req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(getStateDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	deleteDiags := r.deleteAuthMethodPolicy(&state)
+	resp.Diagnostics.Append(deleteDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	createDiags := r.createAuthMethodPolicy(&plan, &state)
+	resp.Diagnostics.Append(createDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	setStateDiags := resp.State.Set(ctx, &state)
+	resp.Diagnostics.Append(setStateDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+}
+
+func (r *authMethodPolicyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state *authMethodPolicyResourceModel
+	diags := req.State.Get(ctx, &state)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	deleteDiags := r.deleteAuthMethodPolicy(state)
+	resp.Diagnostics.Append(deleteDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+}
+
+func (r *authMethodPolicyResource) createAuthMethodPolicy(plan, state *authMethodPolicyResourceModel) diag.Diagnostics {
 	excludedGroups := []graphModels.ExcludeTargetable{} //declares a non nill empty slice
 	targetType := graphModels.GROUP_AUTHENTICATIONMETHODTARGETTYPE
 
@@ -209,11 +212,23 @@ func (r *authMethodPolicyResource) Update(ctx context.Context, req resource.Upda
 	}
 
 	requestBody := r.getAuthMethodReqBody(plan.Type.ValueString())
-	authMethodPolicyState := r.getState(plan.State.ValueString())
+	if requestBody == nil {
+		return diag.Diagnostics{
+			diag.NewErrorDiagnostic(
+				"[API ERROR] Invalid Authentication Method Type",
+				fmt.Sprintf("'%v' for invalid, only acceptable values are 'Fido2', "+
+					"'MicrosoftAuthenticator', 'Voice', 'Sms', 'SoftwareOath', "+
+					"'TemporaryAccessPass' and 'X509Certificate'.",
+					plan.Type.ValueString()),
+			),
+		}
+	}
+	authMethodPolicyState, getStateDiags := r.getState(plan.State.ValueString())
+	if getStateDiags != nil {
+		return getStateDiags
+	}
 	requestBody.SetState(&authMethodPolicyState)
 	requestBody.SetExcludeTargets(excludedGroups)
-
-	state = plan
 
 	updateAuthMethodPolicy := func() error {
 		_, err := r.client.Policies().
@@ -234,34 +249,30 @@ func (r *authMethodPolicyResource) Update(ctx context.Context, req resource.Upda
 	err := backoff.Retry(updateAuthMethodPolicy, reconnectBackoff)
 
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"[API ERROR] Unable to Create Authentication Method Policy",
-			"An unexpected error occurred while creating the Authentication Method Policy "+
-				"from Microsoft Entra ID via Microsoft Graph API. Please verify that the provided "+
-				"inputs are correct and that the API permissions are "+
-				"correctly configured.\n\n"+
-				"Microsoft Graph API Error: "+err.Error(),
-		)
-		return
+		return diag.Diagnostics{
+			diag.NewErrorDiagnostic(
+				"[API ERROR] Unable to Create Authentication Method Policy",
+				"An unexpected error occurred while creating the Authentication Method Policy "+
+					"from Microsoft Entra ID via Microsoft Graph API. Please verify that the provided "+
+					"inputs are correct and that the API permissions are "+
+					"correctly configured.\n\n"+
+					"Microsoft Graph API Error: "+err.Error(),
+			),
+		}
 	}
 
-	setStateDiags := resp.State.Set(ctx, &state)
-	resp.Diagnostics.Append(setStateDiags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
+	*state = *plan
+
+	return nil
 }
 
-func (r *authMethodPolicyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state *authMethodPolicyResourceModel
-	diags := req.State.Get(ctx, &state)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
+func (r *authMethodPolicyResource) deleteAuthMethodPolicy(state *authMethodPolicyResourceModel) diag.Diagnostics {
+	requestBody := r.getAuthMethodReqBody(state.Type.ValueString())
+	authMethodPolicyState, getStateDiags := r.getState("disabled")
+	if getStateDiags != nil {
+		return getStateDiags
 	}
 
-	requestBody := r.getAuthMethodReqBody(state.Type.ValueString())
-	authMethodPolicyState := r.getState("disabled")
 	requestBody.SetState(&authMethodPolicyState)
 	emptyTarget := []graphModels.ExcludeTargetable{}
 	requestBody.SetExcludeTargets(emptyTarget)
@@ -285,31 +296,42 @@ func (r *authMethodPolicyResource) Delete(ctx context.Context, req resource.Dele
 	err := backoff.Retry(deleteAuthMethodPolicy, reconnectBackoff)
 
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"[API ERROR] Unable to Delete Authentication Method Policy",
-			"An unexpected error occurred while creating the Authentication Method Policy "+
-				"from Microsoft Entra ID via Microsoft Graph API. "+
-				"Microsoft Graph API Error: "+err.Error(),
-		)
-		return
+		return diag.Diagnostics{
+			diag.NewErrorDiagnostic(
+				"[API ERROR] Unable to Delete Authentication Method Policy",
+				"An unexpected error occurred while deleting the Authentication Method Policy "+
+					"from Microsoft Entra ID via Microsoft Graph API. "+
+					"Microsoft Graph API Error: "+err.Error(),
+			),
+		}
 	}
+
+	return nil
 }
 
 func StringPtr(s string) *string {
 	return &s
 }
 
-func (r *authMethodPolicyResource) getState(authMethodState string) graphModels.AuthenticationMethodState {
+func (r *authMethodPolicyResource) getState(authMethodState string) (graphModels.AuthenticationMethodState, diag.Diagnostics) {
 	var state graphModels.AuthenticationMethodState
 
 	switch authMethodState {
 	case "enabled":
 		state = graphModels.ENABLED_AUTHENTICATIONMETHODSTATE
+		return state, nil
 	case "disabled":
 		state = graphModels.DISABLED_AUTHENTICATIONMETHODSTATE
+		return state, nil
+	default:
+		return state, diag.Diagnostics{
+			diag.NewErrorDiagnostic(
+				"[API ERROR] Invalid Authentication Method State",
+				fmt.Sprintf("'%v' is invalid, only acceptable values are 'enabled' and 'disabled' only.",
+					authMethodState),
+			),
+		}
 	}
-
-	return state
 }
 
 func (r *authMethodPolicyResource) getAuthMethodReqBody(authMethodType string) graphModels.AuthenticationMethodConfigurationable {
@@ -332,6 +354,8 @@ func (r *authMethodPolicyResource) getAuthMethodReqBody(authMethodType string) g
 		requestBody = graphModels.NewTemporaryAccessPassAuthenticationMethodConfiguration()
 	case "X509Certificate":
 		requestBody = graphModels.NewX509CertificateAuthenticationMethodConfiguration()
+	default:
+		requestBody = nil
 	}
 
 	return requestBody

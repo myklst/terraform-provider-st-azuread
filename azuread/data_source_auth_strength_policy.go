@@ -3,6 +3,7 @@ package azuread
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/cenkalti/backoff"
@@ -29,8 +30,8 @@ type authStrengthPolicyDataSource struct {
 }
 
 type authStrengthPolicyDataSourceModel struct {
-	AuthStrPolicyID   types.String `tfsdk:"auth_str_policy_id"`
-	AuthStrPolicyName types.String `tfsdk:"auth_str_policy_name"`
+	AuthStrPolicyID   types.String `tfsdk:"id"`
+	AuthStrPolicyName types.String `tfsdk:"name"`
 }
 
 func (d *authStrengthPolicyDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -41,11 +42,11 @@ func (d *authStrengthPolicyDataSource) Schema(_ context.Context, req datasource.
 	resp.Schema = schema.Schema{
 		Description: "This data source provides the authentication strength policy based on the id or name of the policy.",
 		Attributes: map[string]schema.Attribute{
-			"auth_str_policy_id": schema.StringAttribute{
+			"id": schema.StringAttribute{
 				Description: "ID of the authentication strength policy.",
 				Optional:    true,
 			},
-			"auth_str_policy_name": schema.StringAttribute{
+			"name": schema.StringAttribute{
 				Description: "Name of the authentication strength policy.",
 				Optional:    true,
 			},
@@ -61,7 +62,7 @@ func (d *authStrengthPolicyDataSource) Configure(_ context.Context, req datasour
 	d.client = req.ProviderData.(azureadClients).graphClient
 }
 
-func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) { 
+func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var authStrengthPolicy models.AuthenticationStrengthPolicyable
 	var authStrengthPolicies models.AuthenticationStrengthPolicyCollectionResponseable
 	var err error
@@ -129,7 +130,7 @@ func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.
 			for _, policy := range authStrengthPolicies.GetValue() {
 				if types.StringValue(*policy.GetDisplayName()) == plan.AuthStrPolicyName {
 					state.AuthStrPolicyName = plan.AuthStrPolicyName
-					state.AuthStrPolicyID = types.StringValue(*policy.GetId())
+					state.AuthStrPolicyID = types.StringValue(fmt.Sprintf("/policies/authenticationStrengthPolicies/%s", *policy.GetId()))
 					break
 				}
 			}

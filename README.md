@@ -26,13 +26,13 @@ Local Installation
     ```
     terraform {
       required_providers {
-        st-byteplus = {
+        st-azuread = {
           source = "example.local/myklst/st-azuread"
         }
       }
     }
 
-    provider "st-byteplus" {}
+    provider "st-azuread" {}
     ```
 
 Why Custom Provider

@@ -14,7 +14,7 @@ This data source provides the authentication strength policy based on the id or 
 
 ```terraform
 data "st-azuread_auth_strength_policy" "example" {
-  auth_str_policy_name = "Phishing-resistant MFA"
+  name = "Phishing-resistant MFA"
 }
 ```
 
@@ -23,5 +23,5 @@ data "st-azuread_auth_strength_policy" "example" {
 
 ### Optional
 
-- `auth_str_policy_id` (String) ID of the authentication strength policy.
-- `auth_str_policy_name` (String) Name of the authentication strength policy.
+- `id` (String) ID of the authentication strength policy.
+- `name` (String) Name of the authentication strength policy.
