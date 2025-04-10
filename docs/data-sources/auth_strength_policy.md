@@ -3,18 +3,18 @@
 page_title: "st-azuread_auth_strength_policy Data Source - st-azuread"
 subcategory: ""
 description: |-
-  This data source provides the authentication strength policy based on the id or name of the policy.
+  This data source provides the authentication strength policies based on the list of ids or names of the policies. Will return all policies if input is empty.
 ---
 
 # st-azuread_auth_strength_policy (Data Source)
 
-This data source provides the authentication strength policy based on the id or name of the policy.
+This data source provides the authentication strength policies based on the list of ids or names of the policies. Will return all policies if input is empty.
 
 ## Example Usage
 
 ```terraform
 data "st-azuread_auth_strength_policy" "example" {
-  name = "Phishing-resistant MFA"
+  names = ["Passwordless MFA", "Phishing-resistant MFA"]
 }
 ```
 
@@ -23,5 +23,5 @@ data "st-azuread_auth_strength_policy" "example" {
 
 ### Optional
 
-- `id` (String) ID of the authentication strength policy.
-- `name` (String) Name of the authentication strength policy.
+- `ids` (List of String) The IDs of the authentication strength policy.
+- `names` (List of String) The names of the authentication strength policy.

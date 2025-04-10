@@ -50,7 +50,7 @@ func (r *authMethodPolicyResource) Schema(_ context.Context, _ resource.SchemaRe
 			},
 			"type": schema.StringAttribute{
 				Description: "The type of the authentication method policy. Possible values are " +
-					"`Email`, `Fido2`, `Microsoft` `Authenticator`, `Voice`, `Sms`, `SoftwareOath`" +
+					"`Email`, `Fido2`, `MicrosoftAuthenticator`, `Voice`, `Sms`, `SoftwareOath`" +
 					"`TemporaryAccessPass`, `X509Certificate`",
 				Required: true,
 			},

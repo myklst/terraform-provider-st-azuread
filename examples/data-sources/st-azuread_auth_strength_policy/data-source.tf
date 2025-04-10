@@ -1,3 +1,3 @@
 data "st-azuread_auth_strength_policy" "example" {
-  name = "Phishing-resistant MFA"
+  names = ["Passwordless MFA", "Phishing-resistant MFA"]
 }

@@ -2,15 +2,14 @@ package azuread
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/cenkalti/backoff"
 	graph "github.com/microsoftgraph/msgraph-sdk-go"
 	"github.com/microsoftgraph/msgraph-sdk-go/models"
-	"github.com/microsoftgraph/msgraph-sdk-go/models/odataerrors"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -30,8 +29,8 @@ type authStrengthPolicyDataSource struct {
 }
 
 type authStrengthPolicyDataSourceModel struct {
-	AuthStrPolicyID   types.String `tfsdk:"id"`
-	AuthStrPolicyName types.String `tfsdk:"name"`
+	AuthStrPolicyIDs   types.List `tfsdk:"ids"`
+	AuthStrPolicyNames types.List `tfsdk:"names"`
 }
 
 func (d *authStrengthPolicyDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -40,15 +39,18 @@ func (d *authStrengthPolicyDataSource) Metadata(_ context.Context, req datasourc
 
 func (d *authStrengthPolicyDataSource) Schema(_ context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "This data source provides the authentication strength policy based on the id or name of the policy.",
+		Description: "This data source provides the authentication strength policies based on the list of ids" +
+			" or names of the policies. Will return all policies if input is empty.",
 		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				Description: "ID of the authentication strength policy.",
+			"ids": schema.ListAttribute{
+				Description: "The IDs of the authentication strength policy.",
 				Optional:    true,
+				ElementType: types.StringType,
 			},
-			"name": schema.StringAttribute{
-				Description: "Name of the authentication strength policy.",
+			"names": schema.ListAttribute{
+				Description: "The names of the authentication strength policy.",
 				Optional:    true,
+				ElementType: types.StringType,
 			},
 		},
 	}
@@ -63,78 +65,87 @@ func (d *authStrengthPolicyDataSource) Configure(_ context.Context, req datasour
 }
 
 func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var authStrengthPolicy models.AuthenticationStrengthPolicyable
 	var authStrengthPolicies models.AuthenticationStrengthPolicyCollectionResponseable
 	var err error
 	var plan, state authStrengthPolicyDataSourceModel
+	var policyNames, policyIDs []attr.Value
 	diags := req.Config.Get(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if plan.AuthStrPolicyID != types.StringNull() {
-		getAuthStrengthPolicy := func() error {
-			if authStrengthPolicy, err = d.client.Policies().AuthenticationStrengthPolicies().ByAuthenticationStrengthPolicyId(plan.AuthStrPolicyID.ValueString()).Get(context.Background(), nil); err != nil {
-				return handleAPIError(err)
+	getAuthStrengthPolicies := func() error {
+		if authStrengthPolicies, err = d.client.Policies().AuthenticationStrengthPolicies().Get(context.Background(), nil); err != nil {
+			return handleAPIError(err)
+		}
+		return nil
+	}
+
+	reconnectBackoff := backoff.NewExponentialBackOff()
+	reconnectBackoff.MaxElapsedTime = 30 * time.Second
+	err = backoff.Retry(getAuthStrengthPolicies, reconnectBackoff)
+
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"[API ERROR] Unable to Retrieve Authentication Strength Policy",
+			"An unexpected error occurred while retrieving the Authentication Strength Policy "+
+				"from Microsoft Entra ID via Microsoft Graph API. Please verify that the provided "+
+				"Authentication Strength Policy Name is correct and that the API permissions are "+
+				"correctly configured.\n\n"+
+				"Microsoft Graph API Error: "+err.Error(),
+		)
+		return
+	}
+
+	nameSet := map[string]struct{}{}
+	idSet := map[string]struct{}{}
+
+	if !plan.AuthStrPolicyNames.IsNull() && !plan.AuthStrPolicyNames.IsUnknown() {
+		for _, v := range plan.AuthStrPolicyNames.Elements() {
+			name := v.(types.String).ValueString()
+			nameSet[name] = struct{}{}
+		}
+
+	} else if !plan.AuthStrPolicyIDs.IsNull() && !plan.AuthStrPolicyIDs.IsUnknown() {
+		for _, v := range plan.AuthStrPolicyIDs.Elements() {
+			id := v.(types.String).ValueString()
+			idSet[id] = struct{}{}
+		}
+	}
+
+	// Filter policies based on matching name or ID
+	if len(nameSet) != 0 {
+		for _, policy := range authStrengthPolicies.GetValue() {
+			displayName := *policy.GetDisplayName()
+			if _, match := nameSet[displayName]; len(nameSet) > 0 && match {
+				addPolicy(policy, &policyNames, &policyIDs)
 			}
-			return nil
 		}
-
-		reconnectBackoff := backoff.NewExponentialBackOff()
-		reconnectBackoff.MaxElapsedTime = 30 * time.Second
-		err := backoff.Retry(getAuthStrengthPolicy, reconnectBackoff)
-
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"[API ERROR] Unable to Retrieve Authentication Strength Policy",
-				"An unexpected error occurred while retrieving the Authentication Strength Policy "+
-					"from Microsoft Entra ID via Microsoft Graph API. Please verify that the provided "+
-					"Authentication Strength Policy ID is correct and that the API permissions are "+
-					"correctly configured.\n\n"+
-					"Microsoft Graph API Error: "+err.Error(),
-			)
-			return
+	} else if len(idSet) != 0 {
+		for _, policy := range authStrengthPolicies.GetValue() {
+			id := *policy.GetId()
+			if _, match := idSet[id]; len(idSet) > 0 && match {
+				addPolicy(policy, &policyNames, &policyIDs)
+			}
 		}
-
-		if types.StringValue(*authStrengthPolicy.GetId()) == plan.AuthStrPolicyID {
-			state.AuthStrPolicyID = plan.AuthStrPolicyID
-			state.AuthStrPolicyName = types.StringValue(*authStrengthPolicy.GetDisplayName())
-		}
-
 	} else {
-		getAuthStrengthPolicies := func() error {
-			if authStrengthPolicies, err = d.client.Policies().AuthenticationStrengthPolicies().Get(context.Background(), nil); err != nil {
-				return handleAPIError(err)
-			}
-			return nil
+		// If no input is provided, include all policies
+		for _, policy := range authStrengthPolicies.GetValue() {
+			addPolicy(policy, &policyNames, &policyIDs)
 		}
+	}
 
-		reconnectBackoff := backoff.NewExponentialBackOff()
-		reconnectBackoff.MaxElapsedTime = 30 * time.Second
-		err := backoff.Retry(getAuthStrengthPolicies, reconnectBackoff)
+	state.AuthStrPolicyIDs, diags = types.ListValue(types.StringType, policyIDs)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"[API ERROR] Unable to Retrieve Authentication Strength Policy",
-				"An unexpected error occurred while retrieving the Authentication Strength Policy "+
-					"from Microsoft Entra ID via Microsoft Graph API. Please verify that the provided "+
-					"Authentication Strength Policy Name is correct and that the API permissions are "+
-					"correctly configured.\n\n"+
-					"Microsoft Graph API Error: "+err.Error(),
-			)
-			return
-		}
-
-		if authStrengthPolicies != nil {
-			for _, policy := range authStrengthPolicies.GetValue() {
-				if types.StringValue(*policy.GetDisplayName()) == plan.AuthStrPolicyName {
-					state.AuthStrPolicyName = plan.AuthStrPolicyName
-					state.AuthStrPolicyID = types.StringValue(fmt.Sprintf("/policies/authenticationStrengthPolicies/%s", *policy.GetId()))
-					break
-				}
-			}
-		}
+	state.AuthStrPolicyNames, diags = types.ListValue(types.StringType, policyNames)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
 	diags = resp.State.Set(ctx, &state)
@@ -144,16 +155,7 @@ func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.
 	}
 }
 
-func handleAPIError(err error) error {
-	var graphErr *odataerrors.ODataError
-
-	if errors.As(err, &graphErr) {
-		if isAbleToRetry(graphErr.GetStatusCode()) {
-			return err
-		} else {
-			return backoff.Permanent(err)
-		}
-	} else {
-		return backoff.Permanent(err)
-	}
+func addPolicy(policy models.AuthenticationStrengthPolicyable, names, ids *[]attr.Value) {
+	*names = append(*names, types.StringValue(*policy.GetDisplayName()))
+	*ids = append(*ids, types.StringValue(fmt.Sprintf("/policies/authenticationStrengthPolicies/%s", *policy.GetId())))
 }

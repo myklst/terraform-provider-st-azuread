@@ -26,7 +26,7 @@ resource "st-azuread_auth_method_policy" "example" {
 ### Required
 
 - `state` (String) Whether the authentication method policy is enabled in the tenant. Possible values are `enabled` or `disabled`.
-- `type` (String) The type of the authentication method policy. Possible values are `Email`, `Fido2`, `Microsoft` `Authenticator`, `Voice`, `Sms`, `SoftwareOath``TemporaryAccessPass`, `X509Certificate`
+- `type` (String) The type of the authentication method policy. Possible values are `Email`, `Fido2`, `MicrosoftAuthenticator`, `Voice`, `Sms`, `SoftwareOath``TemporaryAccessPass`, `X509Certificate`
 
 ### Optional
 
