@@ -3,6 +3,7 @@ package azuread
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/cenkalti/backoff"
@@ -16,28 +17,28 @@ import (
 )
 
 var (
-	_ datasource.DataSource              = &authStrengthPolicyDataSource{}
-	_ datasource.DataSourceWithConfigure = &authStrengthPolicyDataSource{}
+	_ datasource.DataSource              = &authStrengthsDataSource{}
+	_ datasource.DataSourceWithConfigure = &authStrengthsDataSource{}
 )
 
-func NewAuthStrengthPolicyDataSource() datasource.DataSource {
-	return &authStrengthPolicyDataSource{}
+func NewAuthStrengthsDataSource() datasource.DataSource {
+	return &authStrengthsDataSource{}
 }
 
-type authStrengthPolicyDataSource struct {
+type authStrengthsDataSource struct {
 	client *graph.GraphServiceClient
 }
 
-type authStrengthPolicyDataSourceModel struct {
-	AuthStrPolicyIDs   types.List `tfsdk:"ids"`
-	AuthStrPolicyNames types.List `tfsdk:"names"`
+type authStrengthsDataSourceModel struct {
+	AuthStrIDs   types.List `tfsdk:"ids"`
+	AuthStrNames types.List `tfsdk:"names"`
 }
 
-func (d *authStrengthPolicyDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_auth_strength_policy"
+func (d *authStrengthsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_auth_strengths"
 }
 
-func (d *authStrengthPolicyDataSource) Schema(_ context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *authStrengthsDataSource) Schema(_ context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "This data source provides the authentication strength policies based on the list of ids" +
 			" or names of the policies. Will return all policies if input is empty.",
@@ -56,7 +57,7 @@ func (d *authStrengthPolicyDataSource) Schema(_ context.Context, req datasource.
 	}
 }
 
-func (d *authStrengthPolicyDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *authStrengthsDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -64,10 +65,10 @@ func (d *authStrengthPolicyDataSource) Configure(_ context.Context, req datasour
 	d.client = req.ProviderData.(azureadClients).graphClient
 }
 
-func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var authStrengthPolicies models.AuthenticationStrengthPolicyCollectionResponseable
+func (d *authStrengthsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var authStrengths models.AuthenticationStrengthPolicyCollectionResponseable
 	var err error
-	var plan, state authStrengthPolicyDataSourceModel
+	var plan, state authStrengthsDataSourceModel
 	var policyNames, policyIDs []attr.Value
 	diags := req.Config.Get(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
@@ -75,8 +76,16 @@ func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.
 		return
 	}
 
-	getAuthStrengthPolicies := func() error {
-		if authStrengthPolicies, err = d.client.Policies().AuthenticationStrengthPolicies().Get(context.Background(), nil); err != nil {
+	if len(plan.AuthStrIDs.Elements()) > 0 && len(plan.AuthStrNames.Elements()) > 0 {
+		resp.Diagnostics.AddError(
+			"[INPUT ERROR] Invalid Input",
+			"Only one of 'ids' or 'names' may be specified, not both.",
+		)
+		return
+	}
+
+	getAuthStrengths := func() error {
+		if authStrengths, err = d.client.Policies().AuthenticationStrengthPolicies().Get(context.Background(), nil); err != nil {
 			return handleAPIError(err)
 		}
 		return nil
@@ -84,7 +93,7 @@ func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.
 
 	reconnectBackoff := backoff.NewExponentialBackOff()
 	reconnectBackoff.MaxElapsedTime = 30 * time.Second
-	err = backoff.Retry(getAuthStrengthPolicies, reconnectBackoff)
+	err = backoff.Retry(getAuthStrengths, reconnectBackoff)
 
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -98,51 +107,51 @@ func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.
 		return
 	}
 
-	nameSet := map[string]struct{}{}
-	idSet := map[string]struct{}{}
-
-	if !plan.AuthStrPolicyNames.IsNull() && !plan.AuthStrPolicyNames.IsUnknown() {
-		for _, v := range plan.AuthStrPolicyNames.Elements() {
-			name := v.(types.String).ValueString()
-			nameSet[name] = struct{}{}
-		}
-
-	} else if !plan.AuthStrPolicyIDs.IsNull() && !plan.AuthStrPolicyIDs.IsUnknown() {
-		for _, v := range plan.AuthStrPolicyIDs.Elements() {
-			id := v.(types.String).ValueString()
-			idSet[id] = struct{}{}
-		}
+	nameSlice, err := listOfStringsToSlice(plan.AuthStrNames)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"[INPUT ERROR] Invalid Input",
+			err.Error(),
+		)
+	}
+	idSlice, err := listOfStringsToSlice(plan.AuthStrIDs)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"[INPUT ERROR] Invalid Input",
+			err.Error(),
+		)
 	}
 
 	// Filter policies based on matching name or ID
-	if len(nameSet) != 0 {
-		for _, policy := range authStrengthPolicies.GetValue() {
+	if len(nameSlice) != 0 {
+		for _, policy := range authStrengths.GetValue() {
 			displayName := *policy.GetDisplayName()
-			if _, match := nameSet[displayName]; len(nameSet) > 0 && match {
+			if slices.Contains(nameSlice, displayName) {
 				addPolicy(policy, &policyNames, &policyIDs)
 			}
 		}
-	} else if len(idSet) != 0 {
-		for _, policy := range authStrengthPolicies.GetValue() {
+	} else if len(idSlice) != 0 {
+		for _, policy := range authStrengths.GetValue() {
 			id := *policy.GetId()
-			if _, match := idSet[id]; len(idSet) > 0 && match {
+			if slices.Contains(idSlice, id) {
 				addPolicy(policy, &policyNames, &policyIDs)
+
 			}
 		}
 	} else {
-		// If no input is provided, include all policies
-		for _, policy := range authStrengthPolicies.GetValue() {
+		// If no input is provided, include all policy strengths
+		for _, policy := range authStrengths.GetValue() {
 			addPolicy(policy, &policyNames, &policyIDs)
 		}
 	}
 
-	state.AuthStrPolicyIDs, diags = types.ListValue(types.StringType, policyIDs)
+	state.AuthStrIDs, diags = types.ListValue(types.StringType, policyIDs)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	state.AuthStrPolicyNames, diags = types.ListValue(types.StringType, policyNames)
+	state.AuthStrNames, diags = types.ListValue(types.StringType, policyNames)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -158,4 +167,20 @@ func (d *authStrengthPolicyDataSource) Read(ctx context.Context, req datasource.
 func addPolicy(policy models.AuthenticationStrengthPolicyable, names, ids *[]attr.Value) {
 	*names = append(*names, types.StringValue(*policy.GetDisplayName()))
 	*ids = append(*ids, types.StringValue(fmt.Sprintf("/policies/authenticationStrengthPolicies/%s", *policy.GetId())))
+}
+
+func listOfStringsToSlice(list types.List) ([]string, error) {
+	if list.IsNull() || list.IsUnknown() {
+		return []string{}, nil
+	}
+	var result []string
+	for _, v := range list.Elements() {
+		strVal, ok := v.(types.String)
+		if !ok {
+			return nil, fmt.Errorf("expected types.String inside list, got %T", v)
+		}
+		result = append(result, strVal.ValueString())
+	}
+
+	return result, nil
 }

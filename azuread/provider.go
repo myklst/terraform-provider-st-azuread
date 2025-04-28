@@ -217,7 +217,7 @@ func (p *azureadProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 func (p *azureadProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewAuthStrengthPolicyDataSource,
+		NewAuthStrengthsDataSource,
 	}
 }
 
