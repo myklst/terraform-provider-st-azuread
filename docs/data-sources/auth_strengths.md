@@ -13,7 +13,7 @@ This data source provides the authentication strength policies based on the list
 ## Example Usage
 
 ```terraform
-data "st-azuread_auth_strength_policy" "example" {
+data "st-azuread_auth_strengths" "example" {
   names = ["Passwordless MFA", "Phishing-resistant MFA"]
 }
 ```
