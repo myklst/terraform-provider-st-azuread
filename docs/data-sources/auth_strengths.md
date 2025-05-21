@@ -25,3 +25,15 @@ data "st-azuread_auth_strengths" "example" {
 
 - `ids` (List of String) The IDs of the authentication strength policy.
 - `names` (List of String) The names of the authentication strength policy.
+
+### Read-Only
+
+- `auth_strengths` (Attributes List) List of authentication strength policies with ID and name. (see [below for nested schema](#nestedatt--auth_strengths))
+
+<a id="nestedatt--auth_strengths"></a>
+### Nested Schema for `auth_strengths`
+
+Read-Only:
+
+- `id` (String) ID of the authentication strength policy.
+- `name` (String) Display name of the authentication strength policy.

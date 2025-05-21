@@ -30,8 +30,14 @@ type authStrengthsDataSource struct {
 }
 
 type authStrengthsDataSourceModel struct {
-	AuthStrIDs   types.List `tfsdk:"ids"`
-	AuthStrNames types.List `tfsdk:"names"`
+	AuthStrIDs    types.List          `tfsdk:"ids"`   // still needed for input
+	AuthStrNames  types.List          `tfsdk:"names"` // still needed for input
+	AuthStrengths []authStrengthModel `tfsdk:"auth_strengths"`
+}
+
+type authStrengthModel struct {
+	ID   types.String `tfsdk:"id"`
+	Name types.String `tfsdk:"name"`
 }
 
 func (d *authStrengthsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -52,6 +58,22 @@ func (d *authStrengthsDataSource) Schema(_ context.Context, req datasource.Schem
 				Description: "The names of the authentication strength policy.",
 				Optional:    true,
 				ElementType: types.StringType,
+			},
+			"auth_strengths": schema.ListNestedAttribute{
+				Description: "List of authentication strength policies with ID and name.",
+				Computed:    true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id": schema.StringAttribute{
+							Description: "ID of the authentication strength policy.",
+							Computed:    true,
+						},
+						"name": schema.StringAttribute{
+							Description: "Display name of the authentication strength policy.",
+							Computed:    true,
+						},
+					},
+				},
 			},
 		},
 	}
@@ -144,6 +166,27 @@ func (d *authStrengthsDataSource) Read(ctx context.Context, req datasource.ReadR
 			addPolicy(policy, &policyNames, &policyIDs)
 		}
 	}
+
+	var authStrengthItems []authStrengthModel
+
+	for _, policy := range authStrengths.GetValue() {
+		name := *policy.GetDisplayName()
+		id := *policy.GetId()
+		fullID := fmt.Sprintf("/policies/authenticationStrengthPolicies/%s", id)
+
+		if len(nameSlice) > 0 && !slices.Contains(nameSlice, name) {
+			continue
+		}
+		if len(idSlice) > 0 && !slices.Contains(idSlice, id) {
+			continue
+		}
+		authStrengthItems = append(authStrengthItems, authStrengthModel{
+			ID:   types.StringValue(fullID),
+			Name: types.StringValue(name),
+		})
+	}
+
+	state.AuthStrengths = authStrengthItems
 
 	state.AuthStrIDs, diags = types.ListValue(types.StringType, policyIDs)
 	resp.Diagnostics.Append(diags...)
