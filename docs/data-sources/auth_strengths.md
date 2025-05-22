@@ -12,8 +12,22 @@ This data source provides the authentication strength policies based on the list
 
 ## Example Usage
 
+*Look up all authentication strength policies*
 ```terraform
-data "st-azuread_auth_strengths" "example" {
+data "st-azuread_auth_strengths" "ids" {
+}
+```
+
+*Look up authentication strength policies by ids*
+```terraform
+data "st-azuread_auth_strengths" "ids" {
+  ids = ["xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx4"]
+}
+```
+
+*Look up authentication strength policies by names*
+```terraform
+data "st-azuread_auth_strengths" "names" {
   names = ["Passwordless MFA", "Phishing-resistant MFA"]
 }
 ```
@@ -25,6 +39,8 @@ data "st-azuread_auth_strengths" "example" {
 
 - `ids` (List of String) The IDs of the authentication strength policy.
 - `names` (List of String) The names of the authentication strength policy.
+
+~> Only `ids` or `names` can be specified.
 
 ### Read-Only
 

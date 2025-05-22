@@ -2,8 +2,9 @@ resource "st-azuread_named_location" "ip" {
   display_name = "named-location-ip"
 
   ip {
-    ip_ranges = ["1.1.1.1/32"]
-    trusted   = false
+    ip_ranges     = ["1.1.1.1/32"]
+    trusted       = false
+    force_destroy = false
   }
 }
 

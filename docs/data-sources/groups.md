@@ -12,10 +12,41 @@ This data source provides the list of the group
 
 ## Example Usage
 
+*Look up by group name*
 ```terraform
-data "azuread_groups" "user_groups" {
-  display_names  = ["Example"]
-  ignore_missing = true
+data "azuread_groups" "example" {
+  display_names = ["group-a", "group-b"]
+}
+```
+
+*Look up by display name prefix*
+```terraform
+data "azuread_groups" "sales" {
+  display_name_prefix = "sales-"
+}
+```
+
+*Look up all groups*
+```terraform
+data "azuread_groups" "all" {
+  return_all = true
+}
+```
+
+*Look up all mail-enabled groups*
+```terraform
+data "azuread_groups" "mail_enabled" {
+  mail_enabled = true
+  return_all   = true
+}
+```
+
+*Look up all security-enabled groups that are not mail-enabled*
+```terraform
+data "azuread_groups" "security_only" {
+  mail_enabled     = false
+  return_all       = true
+  security_enabled = true
 }
 ```
 
@@ -30,6 +61,8 @@ data "azuread_groups" "user_groups" {
 - `mail_enabled` (Boolean) Whether the groups are mail-enabled.
 - `return_all` (Boolean) Return all groups. Cannot be used with `display_name_prefix` or `display_names` and cannot be set to true when `ignore_missing` is also true.
 - `security_enabled` (Boolean) Whether the groups are security-enabled.
+
+~> One of `display_names`, `display_name_prefix` or `return_all` should be specified.
 
 ### Read-Only
 

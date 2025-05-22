@@ -11,6 +11,7 @@ import (
 
 	"github.com/cenkalti/backoff"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -41,8 +42,9 @@ type namedLocationResourceModel struct {
 }
 
 type ipBlock struct {
-	IPRanges types.List `tfsdk:"ip_ranges"`
-	Trusted  types.Bool `tfsdk:"trusted"`
+	IPRanges     types.List `tfsdk:"ip_ranges"`
+	Trusted      types.Bool `tfsdk:"trusted"`
+	ForceDestroy types.Bool `tfsdk:"force_destroy"`
 }
 
 type countryBlock struct {
@@ -81,6 +83,10 @@ func (r *namedLocationResource) Schema(_ context.Context, _ resource.SchemaReque
 						Optional:    true,
 						Description: "Whether the named location is trusted. Defaults to 'false'.",
 					},
+					"force_destroy": schema.BoolAttribute{
+						Optional:    true,
+						Description: "Whether to forcefully destroy the IP-based named location when trusted is set to true. This prevents accidental deletion of trusted IPs.",
+					},
 				},
 			},
 			"country": schema.SingleNestedBlock{
@@ -111,6 +117,35 @@ func (r *namedLocationResource) Configure(_ context.Context, req resource.Config
 	}
 
 	r.client = req.ProviderData.(azureadClients).graphClient
+}
+
+func (r *namedLocationResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		// If the entire plan is null, the resource is planned for destruction.
+	} else {
+		var plan namedLocationResourceModel
+		diags := req.Plan.Get(ctx, &plan)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		// Validate that if ip.trusted is true, ip.force_destroy must be explicitly set.
+		if plan.IP != nil &&
+			!plan.IP.Trusted.IsNull() &&
+			!plan.IP.Trusted.IsUnknown() &&
+			plan.IP.Trusted.ValueBool() {
+
+			if plan.IP.ForceDestroy.IsNull() || plan.IP.ForceDestroy.IsUnknown() {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("ip").AtName("force_destroy"),
+					"Missing Required Attribute",
+					"When 'ip.trusted' is set to true, you must also set 'ip.force_destroy' explicitly.",
+				)
+				return
+			}
+		}
+	}
 }
 
 func (r *namedLocationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -312,6 +347,7 @@ func (r *namedLocationResource) Update(ctx context.Context, req resource.UpdateR
 	}
 
 	if plan.IP != nil {
+		state.IP.ForceDestroy = plan.IP.ForceDestroy
 		if err := r.updateIpNamedLocation(ctx, &plan, &state); err != nil {
 			resp.Diagnostics.AddError(
 				"[API ERROR] Failed to update named location.",
@@ -345,8 +381,21 @@ func (r *namedLocationResource) Delete(ctx context.Context, req resource.DeleteR
 	parts := strings.Split(fullID, "/")
 	namedLocationID := parts[len(parts)-1]
 
-	// If it's an IP-based named location and it's trusted, set IsTrusted to false before deletion
-	if state.IP != nil && state.IP.Trusted.ValueBool() {
+	if state.IP.Trusted.ValueBool() && !state.IP.ForceDestroy.ValueBool() {
+		resp.Diagnostics.AddError(
+			"Unable to delete Named Location",
+			fmt.Sprintf(
+				"Named Location %q (ID: %q) cannot be deleted because it is marked as a Trusted location. "+
+					"To delete this resource, you must explicitly set the 'ip.force_destroy' attribute to true.",
+				state.DisplayName.ValueString(),
+				namedLocationID,
+			),
+		)
+		return
+	}
+
+	// If it's an IP-based named location and it's trusted and the force destroy is set to true, set IsTrusted to false before deletion.
+	if state.IP != nil && state.IP.Trusted.ValueBool() && state.IP.ForceDestroy.ValueBool() {
 		isTrusted := false
 		updateIpNamedLocationRequest := graphmodels.NewIpNamedLocation()
 		updateIpNamedLocationRequest.SetIsTrusted(&isTrusted)
@@ -395,7 +444,7 @@ func (r *namedLocationResource) Delete(ctx context.Context, req resource.DeleteR
 		odataType := "#microsoft.graph.ipNamedLocation"
 		updateIpNamedLocationRequest.SetOdataType(&odataType)
 
-		// Backoff retry for the PATCH request
+		// Backoff retry for the PATCH request.
 		var patchErr error
 		backoff := 2 * time.Second
 		for i := 0; i < 5; i++ {
@@ -490,7 +539,7 @@ func (d *namedLocationResource) createIPNamedLocation(plan *namedLocationResourc
 	createIPNamedLocationRequest.SetIpRanges(ipRanges)
 
 	createIPNamedLocation := func() error {
-		// Check if a named location with the same DisplayName already exists
+		// Check if a named location with the same DisplayName already exists.
 		existingLocations, err := d.client.Identity().
 			ConditionalAccess().
 			NamedLocations().
@@ -506,7 +555,7 @@ func (d *namedLocationResource) createIPNamedLocation(plan *namedLocationResourc
 			}
 		}
 
-		// If not found, create a new named location
+		// If not found, create a new named location.
 		createdNamedLocation, err := d.client.Identity().
 			ConditionalAccess().
 			NamedLocations().
@@ -553,7 +602,7 @@ func (d *namedLocationResource) createCountryNamedLocation(plan *namedLocationRe
 	odataType := "#microsoft.graph.countryNamedLocation"
 	createCountryNamedLocationRequest.SetOdataType(&odataType)
 
-	// Set DisplayName and IsTrusted
+	// Set DisplayName and IsTrusted.
 	createCountryNamedLocationRequest.SetDisplayName(plan.DisplayName.ValueStringPointer())
 
 	if plan.Country.IncludeUnknownCountriesAndRegions.IsNull() || plan.Country.IncludeUnknownCountriesAndRegions.IsUnknown() {
@@ -602,7 +651,7 @@ func (d *namedLocationResource) createCountryNamedLocation(plan *namedLocationRe
 	createCountryNamedLocationRequest.SetCountryLookupMethod(&method)
 
 	createCountryNamedLocation := func() error {
-		// Check if a named location with the same DisplayName already exists
+		// Check if a named location with the same DisplayName already exists.
 		existingLocations, err := d.client.Identity().
 			ConditionalAccess().
 			NamedLocations().
@@ -660,7 +709,7 @@ func (d *namedLocationResource) createCountryNamedLocation(plan *namedLocationRe
 func (d *namedLocationResource) updateIpNamedLocation(ctx context.Context, plan, state *namedLocationResourceModel) error {
 	updateIpNamedLocationRequest := graphmodels.NewIpNamedLocation()
 
-	// Extract the ID from previous state
+	// Extract the ID from previous state.
 	fullID := state.ID.ValueString()
 	parts := strings.Split(fullID, "/")
 	namedLocationId := parts[len(parts)-1]
@@ -685,14 +734,13 @@ func (d *namedLocationResource) updateIpNamedLocation(ctx context.Context, plan,
 
 		cidr := cidrStrVal.ValueString()
 
-		// Parse the CIDR to determine whether it's IPv4 or IPv6
+		// Parse the CIDR to determine whether it's IPv4 or IPv6.
 		ip, _, err := net.ParseCIDR(cidr)
 		if err != nil {
 			return fmt.Errorf("invalid CIDR format: %s", cidr)
 		}
 
 		if ip.To4() != nil {
-			// IPv4
 			ipv4Range := graphmodels.NewIPv4CidrRange()
 			ipv4Range.SetCidrAddress(&cidr)
 
@@ -701,7 +749,6 @@ func (d *namedLocationResource) updateIpNamedLocation(ctx context.Context, plan,
 
 			ipRanges = append(ipRanges, ipv4Range)
 		} else {
-			// IPv6
 			ipv6Range := graphmodels.NewIPv6CidrRange()
 			ipv6Range.SetCidrAddress(&cidr)
 
@@ -737,7 +784,7 @@ func (d *namedLocationResource) updateIpNamedLocation(ctx context.Context, plan,
 func (d *namedLocationResource) updateCountryNamedLocation(ctx context.Context, plan, state *namedLocationResourceModel, resp *resource.CreateResponse) error {
 	updateCountryNamedLocationRequest := graphmodels.NewCountryNamedLocation()
 
-	// Extract the ID from previous state
+	// Extract the ID from previous state.
 	fullID := state.ID.ValueString()
 	parts := strings.Split(fullID, "/")
 	namedLocationId := parts[len(parts)-1]

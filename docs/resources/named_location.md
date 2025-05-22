@@ -12,16 +12,21 @@ Manages a Named Location within Azure Active Directory.
 
 ## Example Usage
 
+*Create IP-based named location*
 ```terraform
 resource "st-azuread_named_location" "ip" {
   display_name = "named-location-ip"
 
   ip {
-    ip_ranges = ["1.1.1.1/32"]
-    trusted   = false
+    ip_ranges     = ["1.1.1.1/32"]
+    trusted       = false
+    force_destroy = false
   }
 }
+```
 
+*Create Country-based named location*
+```terraform
 resource "st-azuread_named_location" "country" {
   display_name = "named-location-country"
 
@@ -64,5 +69,8 @@ Optional:
 
 Optional:
 
+- `force_destroy` (Boolean) Whether to forcefully destroy the IP-based named location when trusted is set to true. This prevents accidental deletion of trusted IPs.
 - `ip_ranges` (List of String) List of IP ranges in CIDR format.
 - `trusted` (Boolean) Whether the named location is trusted. Defaults to 'false'.
+
+~> When `trusted` is specified, `force_destroy` must be specified too.

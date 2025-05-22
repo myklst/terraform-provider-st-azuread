@@ -30,8 +30,8 @@ type authStrengthsDataSource struct {
 }
 
 type authStrengthsDataSourceModel struct {
-	AuthStrIDs    types.List          `tfsdk:"ids"`   // still needed for input
-	AuthStrNames  types.List          `tfsdk:"names"` // still needed for input
+	AuthStrIDs    types.List          `tfsdk:"ids"`
+	AuthStrNames  types.List          `tfsdk:"names"`
 	AuthStrengths []authStrengthModel `tfsdk:"auth_strengths"`
 }
 
@@ -91,7 +91,9 @@ func (d *authStrengthsDataSource) Read(ctx context.Context, req datasource.ReadR
 	var authStrengths models.AuthenticationStrengthPolicyCollectionResponseable
 	var err error
 	var plan, state authStrengthsDataSourceModel
-	var policyNames, policyIDs []attr.Value
+	var policyNames []attr.Value
+	var policyIDs []attr.Value
+
 	diags := req.Config.Get(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -106,84 +108,56 @@ func (d *authStrengthsDataSource) Read(ctx context.Context, req datasource.ReadR
 		return
 	}
 
+	// Retrieve authentication strength policies with backoff retry.
 	getAuthStrengths := func() error {
-		if authStrengths, err = d.client.Policies().AuthenticationStrengthPolicies().Get(context.Background(), nil); err != nil {
-			return handleAPIError(err)
-		}
-		return nil
+		authStrengths, err = d.client.Policies().AuthenticationStrengthPolicies().Get(context.Background(), nil)
+		return handleAPIError(err)
 	}
-
-	reconnectBackoff := backoff.NewExponentialBackOff()
-	reconnectBackoff.MaxElapsedTime = 30 * time.Second
-	err = backoff.Retry(getAuthStrengths, reconnectBackoff)
-
-	if err != nil {
+	backoffPolicy := backoff.NewExponentialBackOff()
+	backoffPolicy.MaxElapsedTime = 30 * time.Second
+	if err = backoff.Retry(getAuthStrengths, backoffPolicy); err != nil {
 		resp.Diagnostics.AddError(
 			"[API ERROR] Unable to Retrieve Authentication Strength Policy",
-			"An unexpected error occurred while retrieving the Authentication Strength Policy "+
-				"from Microsoft Entra ID via Microsoft Graph API. Please verify that the provided "+
-				"Authentication Strength Policy Name is correct and that the API permissions are "+
-				"correctly configured.\n\n"+
-				"Microsoft Graph API Error: "+err.Error(),
+			"An error occurred while retrieving Authentication Strength Policies from Microsoft Graph API. "+
+				"Check the policy names and API permissions.\n\nGraph API Error: "+err.Error(),
 		)
 		return
 	}
 
 	nameSlice, err := listOfStringsToSlice(plan.AuthStrNames)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"[INPUT ERROR] Invalid Input",
-			err.Error(),
-		)
+		resp.Diagnostics.AddError("[INPUT ERROR] Invalid Input", err.Error())
+		return
 	}
 	idSlice, err := listOfStringsToSlice(plan.AuthStrIDs)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"[INPUT ERROR] Invalid Input",
-			err.Error(),
-		)
-	}
-
-	// Filter policies based on matching name or ID
-	if len(nameSlice) != 0 {
-		for _, policy := range authStrengths.GetValue() {
-			displayName := *policy.GetDisplayName()
-			if slices.Contains(nameSlice, displayName) {
-				addPolicy(policy, &policyNames, &policyIDs)
-			}
-		}
-	} else if len(idSlice) != 0 {
-		for _, policy := range authStrengths.GetValue() {
-			id := *policy.GetId()
-			if slices.Contains(idSlice, id) {
-				addPolicy(policy, &policyNames, &policyIDs)
-
-			}
-		}
-	} else {
-		// If no input is provided, include all policy strengths
-		for _, policy := range authStrengths.GetValue() {
-			addPolicy(policy, &policyNames, &policyIDs)
-		}
+		resp.Diagnostics.AddError("[INPUT ERROR] Invalid Input", err.Error())
+		return
 	}
 
 	var authStrengthItems []authStrengthModel
-
 	for _, policy := range authStrengths.GetValue() {
-		name := *policy.GetDisplayName()
-		id := *policy.GetId()
+		namePtr := policy.GetDisplayName()
+		idPtr := policy.GetId()
+		if namePtr == nil || idPtr == nil {
+			continue
+		}
+		name := *namePtr
+		id := *idPtr
 		fullID := fmt.Sprintf("/policies/authenticationStrengthPolicies/%s", id)
 
-		if len(nameSlice) > 0 && !slices.Contains(nameSlice, name) {
+		if (len(nameSlice) > 0 && !slices.Contains(nameSlice, name)) ||
+			(len(idSlice) > 0 && !slices.Contains(idSlice, id)) {
 			continue
 		}
-		if len(idSlice) > 0 && !slices.Contains(idSlice, id) {
-			continue
-		}
+
 		authStrengthItems = append(authStrengthItems, authStrengthModel{
 			ID:   types.StringValue(fullID),
 			Name: types.StringValue(name),
 		})
+
+		policyIDs = append(policyIDs, types.StringValue(fullID))
+		policyNames = append(policyNames, types.StringValue(name))
 	}
 
 	state.AuthStrengths = authStrengthItems
@@ -202,28 +176,19 @@ func (d *authStrengthsDataSource) Read(ctx context.Context, req datasource.ReadR
 
 	diags = resp.State.Set(ctx, &state)
 	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-}
-
-func addPolicy(policy models.AuthenticationStrengthPolicyable, names, ids *[]attr.Value) {
-	*names = append(*names, types.StringValue(*policy.GetDisplayName()))
-	*ids = append(*ids, types.StringValue(fmt.Sprintf("/policies/authenticationStrengthPolicies/%s", *policy.GetId())))
 }
 
 func listOfStringsToSlice(list types.List) ([]string, error) {
 	if list.IsNull() || list.IsUnknown() {
 		return []string{}, nil
 	}
-	var result []string
+	result := make([]string, 0, len(list.Elements()))
 	for _, v := range list.Elements() {
-		strVal, ok := v.(types.String)
-		if !ok {
+		if strVal, ok := v.(types.String); ok {
+			result = append(result, strVal.ValueString())
+		} else {
 			return nil, fmt.Errorf("expected types.String inside list, got %T", v)
 		}
-		result = append(result, strVal.ValueString())
 	}
-
 	return result, nil
 }
